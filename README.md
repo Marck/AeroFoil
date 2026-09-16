@@ -235,7 +235,7 @@ In the `Manage` page, you can organize your library structure, delete older upda
 The home-page discovery rows are generated from **owned BASE titles only** (not update/DLC rows), and only when a real library file is linked.
 
 - `New`: sorted by most recent library file id (newest first), then the first items are used for the section.
-- `Recommended`: sorted by highest `download_count` first. If every candidate has `download_count = 0`, AeroFoil falls back to the same ordering as `New`.
+- `Recommended`: a deterministic daily rotation weighted by local `download_count`. The titles currently visible at the front of `New` are placed after older candidates, so the two rows stay distinct whenever the library is large enough. No library or usage data is sent to an external service.
 
 For the Web UI, these sections are returned through `/api/titles` as `discovery.newest` and `discovery.recommended`.
 

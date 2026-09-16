@@ -20,6 +20,7 @@ import threading
 import logging
 import copy
 import hashlib
+import math
 import flask.cli
 from datetime import timedelta, datetime
 flask.cli.show_server_banner = lambda *args: None
@@ -1134,6 +1135,7 @@ def _get_discovery_sections(limit=12):
 
     now = time.time()
     state_token = _get_titledb_aware_state_token()
+    rotation_key = _recommendation_rotation_key()
     payload = None
     with shop_sections_cache_lock:
         cache_enabled = SHOP_SECTIONS_CACHE_TTL_S is None or SHOP_SECTIONS_CACHE_TTL_S > 0
@@ -1144,6 +1146,7 @@ def _get_discovery_sections(limit=12):
             cache_enabled
             and shop_sections_cache['payload'] is not None
             and shop_sections_cache.get('state_token') == state_token
+            and _shop_sections_payload_matches_rotation(shop_sections_cache['payload'], rotation_key)
             and cache_valid
         )
         if cache_hit:
@@ -1156,6 +1159,7 @@ def _get_discovery_sections(limit=12):
                 disk_cache
                 and disk_cache.get('limit') == max(limit, 50)
                 and str(disk_cache.get('state_token') or '') == state_token
+                and _shop_sections_payload_matches_rotation(disk_cache.get('payload'), rotation_key)
             ):
                 disk_payload = disk_cache.get('payload')
                 disk_ts = float(disk_cache.get('timestamp') or 0)
@@ -1318,12 +1322,70 @@ def _read_proc_meminfo_bytes():
         'vms_bytes': values.get('VmSize')
     }
 
+
+def _recommendation_rotation_key(now=None):
+    """Return the local calendar day used to keep recommendations stable for a day."""
+    if now is None:
+        import datetime as dt_mod
+        now = dt_mod.datetime.now()
+    current = now
+    return current.strftime('%Y-%m-%d')
+
+
+def _shop_sections_payload_matches_rotation(payload, rotation_key=None):
+    if not isinstance(payload, dict):
+        return False
+    expected = rotation_key or _recommendation_rotation_key()
+    return str(payload.get('rotation_key') or '') == expected
+
+
+def _build_rotating_recommendations(base_items, limit=40, rotation_key=None, newest_visible_count=12):
+    """Build stable daily recommendations weighted by local download popularity.
+
+    The titles visible at the front of the New row are considered only after older
+    candidates, keeping the two discovery rows distinct whenever the library is
+    large enough. A deterministic weighted shuffle changes with the calendar day,
+    while larger download counts improve (but do not guarantee) placement.
+    """
+    items = list(base_items or [])
+    try:
+        limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        limit = 40
+    if not items or limit == 0:
+        return []
+
+    try:
+        newest_visible_count = max(0, int(newest_visible_count))
+    except (TypeError, ValueError):
+        newest_visible_count = 12
+    rotation_key = rotation_key or _recommendation_rotation_key()
+
+    def _rank(item):
+        identity = '|'.join((
+            str(item.get('title_id') or ''),
+            str(item.get('app_id') or ''),
+            str(item.get('file_id') or ''),
+        ))
+        digest = hashlib.sha256(f'{rotation_key}|{identity}'.encode('utf-8')).digest()
+        unit_value = (int.from_bytes(digest[:8], 'big') + 1) / ((1 << 64) + 1)
+        downloads = max(0, _safe_int(item.get('download_count')))
+        popularity_weight = 1.0 + min(math.log1p(downloads), 6.0)
+        return (-math.log(unit_value) / popularity_weight, identity)
+
+    split_at = min(newest_visible_count, len(items))
+    older_items = sorted(items[split_at:], key=_rank)
+    newest_items = sorted(items[:split_at], key=_rank)
+    return (older_items + newest_items)[:limit]
+
+
 def _build_shop_sections_payload(limit, full_catalog=False):
     try:
         limit = int(limit or 50)
     except (TypeError, ValueError):
         limit = 50
     limit = max(1, limit)
+    rotation_key = _recommendation_rotation_key()
     ranked_files = (
         db.session.query(
             app_files.c.app_id.label('app_pk'),
@@ -1431,9 +1493,12 @@ def _build_shop_sections_payload(limit, full_catalog=False):
         discovery_limit = 40
         new_items = base_items[:discovery_limit]
 
-        recommended_items = sorted(base_items, key=lambda item: item['download_count'], reverse=True)[:discovery_limit]
-        if not any(item['download_count'] for item in recommended_items):
-            recommended_items = new_items[:discovery_limit]
+        recommended_items = _build_rotating_recommendations(
+            base_items,
+            limit=discovery_limit,
+            rotation_key=rotation_key,
+            newest_visible_count=12,
+        )
 
         all_limit = None
         updates_dlc_limit = None
@@ -1522,7 +1587,8 @@ def _build_shop_sections_payload(limit, full_catalog=False):
                 'truncated': False,
             })
         return {
-            'sections': sections
+            'rotation_key': rotation_key,
+            'sections': sections,
         }
 
 
@@ -7421,6 +7487,7 @@ def shop_sections_api():
 
     now = time.time()
     state_token = _get_titledb_aware_state_token()
+    rotation_key = _recommendation_rotation_key()
     payload = None
     with shop_sections_cache_lock:
         cache_enabled = SHOP_SECTIONS_CACHE_TTL_S is None or SHOP_SECTIONS_CACHE_TTL_S > 0
@@ -7432,6 +7499,7 @@ def shop_sections_api():
             and shop_sections_cache['payload'] is not None
             and shop_sections_cache['limit'] == cache_limit
             and shop_sections_cache.get('state_token') == state_token
+            and _shop_sections_payload_matches_rotation(shop_sections_cache['payload'], rotation_key)
             and cache_valid
         )
         if cache_hit:
@@ -7451,6 +7519,7 @@ def shop_sections_api():
                 disk_cache
                 and disk_cache.get('limit') == cache_limit
                 and str(disk_cache.get('state_token') or '') == state_token
+                and _shop_sections_payload_matches_rotation(disk_cache.get('payload'), rotation_key)
             ):
                 disk_payload = disk_cache.get('payload')
                 disk_ts = float(disk_cache.get('timestamp') or 0)

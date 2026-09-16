@@ -20,8 +20,16 @@ class Watcher:
         self.event_handler = Handler(self.callback)
         use_polling = str(os.environ.get('WATCHDOG_POLLING', '')).strip().lower() in ('1', 'true', 'yes')
         if use_polling:
-            self.observer = PollingObserver()
-            logger.info('Watchdog using polling observer (WATCHDOG_POLLING enabled).')
+            raw_interval = os.environ.get('AEROFOIL_WATCHDOG_POLL_INTERVAL_S', '10')
+            try:
+                interval = float(raw_interval)
+                if not 1 <= interval <= 3600:
+                    raise ValueError('interval outside 1..3600 seconds')
+            except (TypeError, ValueError):
+                logger.warning('Invalid AEROFOIL_WATCHDOG_POLL_INTERVAL_S; using 10 seconds.')
+                interval = 10.0
+            self.observer = PollingObserver(timeout=interval)
+            logger.info('Watchdog using polling observer (interval %.1f seconds).', interval)
         else:
             self.observer = Observer()
             logger.info('Watchdog using native observer.')

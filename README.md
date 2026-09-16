@@ -133,6 +133,7 @@ New `AEROFOIL_*` variables are preferred. Legacy `OWNFOIL_*` names are still acc
 - `AEROFOIL_USE_FLASK_DEV`: set to `true`/`1` to force Flask dev server instead of Waitress.
 - `AEROFOIL_STATIC_MAX_AGE_S`: static asset cache max-age in seconds (legacy `OWNFOIL_STATIC_MAX_AGE_S` also supported; default `3600`).
 - `WATCHDOG_POLLING`: set to `1`/`true`/`yes` to force polling-based file watcher observer.
+- `AEROFOIL_WATCHDOG_POLL_INTERVAL_S`: delay between recursive filesystem snapshots when polling is enabled (default `10` seconds; range `1`–`3600`). Increase to `30` or `60` for lower idle filesystem/CPU overhead on large or network libraries. Longer intervals delay detection of external changes; snapshot time and file-stability checks add to that delay. Native watching is unaffected.
 - `LOG_LEVEL`: Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
 
 ## Using Python

@@ -198,3 +198,25 @@ class WatcherRegistrationTests(unittest.TestCase):
                 worker.join(2)
         self.assertFalse(worker.is_alive())
         self.assertEqual(observer.schedule.call_count, 2)
+
+
+class WatcherPollingIntervalTests(unittest.TestCase):
+    def test_polling_interval_default_override_and_invalid_values(self):
+        from app.file_watcher import Watcher
+        for value, expected in ((None, 10), ('30', 30), ('1.5', 1.5),
+                                ('0', 10), ('-1', 10), ('nan', 10),
+                                ('inf', 10), ('3601', 10), ('invalid', 10)):
+            with self.subTest(value=value):
+                env = {'WATCHDOG_POLLING': '1'}
+                if value is not None:
+                    env['AEROFOIL_WATCHDOG_POLL_INTERVAL_S'] = value
+                with patch.dict('os.environ', env, clear=True), patch('app.file_watcher.PollingObserver') as observer:
+                    Watcher(lambda events: None)
+                    observer.assert_called_once_with(timeout=expected)
+
+    def test_native_observer_does_not_use_polling_interval(self):
+        from app.file_watcher import Watcher
+        with patch.dict('os.environ', {'WATCHDOG_POLLING': '0', 'AEROFOIL_WATCHDOG_POLL_INTERVAL_S': '30'}, clear=True), patch('app.file_watcher.Observer') as native, patch('app.file_watcher.PollingObserver') as polling:
+            Watcher(lambda events: None)
+        native.assert_called_once_with()
+        polling.assert_not_called()

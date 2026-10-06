@@ -2737,6 +2737,22 @@ class ManagedCompletionStateTests(unittest.TestCase):
         self.assertEqual(downloads_manager._state.get("duplicates"), [])
         delete_payload_mock.assert_called_once_with("X:\\fixture-root\\downloads\\Example Release")
 
+    @patch("app.downloads.manager._delete_download_payload", return_value=(True, None))
+    @patch("app.downloads.manager.load_settings", return_value={})
+    @patch("app.downloads.manager._get_download_activity_snapshot", return_value={
+        "active_by_protocol": {"torrent": {"items": [{"name": "Example Release"}]}},
+    })
+    @patch("app.downloads.manager._state_lock")
+    @patch("app.downloads.manager._state", {
+        "duplicates": [{"id": "dup-active", "path": "X:\\fixture-root\\downloads\\Example Release"}],
+    })
+    def test_remove_duplicate_download_refuses_while_still_downloading(self, _lock, _snapshot, _settings, delete_mock):
+        ok, message = remove_duplicate_download("dup-active")
+
+        self.assertFalse(ok)
+        self.assertIn("Still downloading", message)
+        delete_mock.assert_not_called()
+
     @patch("app.downloads.manager._state_lock")
     @patch("app.downloads.manager._state", {
         "running": False,

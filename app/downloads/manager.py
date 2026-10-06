@@ -737,6 +737,20 @@ def remove_pending_download(key):
     return _remove_pending_live_download(key, delete_context)
 
 
+def _is_active_download(path):
+    # The client may still be writing into a duplicate's folder (other files of the same torrent).
+    name = re.split(r"[\\/]", str(path).rstrip("\\/"))[-1]
+    try:
+        snapshot = _get_download_activity_snapshot(load_settings().get("downloads", {}))
+    except Exception:
+        return False
+    return any(
+        item.get("name") == name
+        for bucket in (snapshot.get("active_by_protocol") or {}).values()
+        for item in bucket.get("items") or []
+    )
+
+
 def remove_duplicate_download(duplicate_id):
     duplicate_id = str(duplicate_id or "").strip()
     if not duplicate_id:
@@ -766,6 +780,8 @@ def remove_duplicate_download(duplicate_id):
     target_path = str(target_entry.get("path") or "").strip()
     if not target_path:
         return False, "Duplicate entry has no deletable path."
+    if _is_active_download(target_path):
+        return False, "Still downloading in the client: dismiss this entry or remove the download there first."
 
     delete_ok, delete_message = _delete_download_payload(target_path)
     if not delete_ok:
@@ -2121,6 +2137,12 @@ def _normalize_imported_wrapped_files(dest_path):
 
 
 def _move_completed_with_reason(item, update_info=None, copy_files=False, hardlink_files=False):
+    # Identifying DLC and update files needs TitleDB, which is unloaded while idle.
+    with titles_lib.titledb_session():
+        return _move_completed_in_titledb_session(item, update_info, copy_files, hardlink_files)
+
+
+def _move_completed_in_titledb_session(item, update_info=None, copy_files=False, hardlink_files=False):
     library_paths = get_libraries_path()
     if not library_paths:
         logger.warning("No library paths configured; cannot move download.")

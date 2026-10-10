@@ -1,7 +1,8 @@
 name: Build and push to GHCR
 
 # Builds the patched branch (upstream dev plus our fixes) as ghcr.io/marck/aerofoil.
-# Run it manually to merge the newest upstream branch into patched first.
+# Run it manually to build patched merged with the newest upstream branch. The merge is
+# not pushed: GITHUB_TOKEN may not push upstream's edits to its own workflow files.
 on:
   push:
     branches: [patched]
@@ -20,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
       packages: write
     env:
       MERGE: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_ref != '' }}
@@ -31,13 +32,17 @@ jobs:
           fetch-depth: 0
 
       - name: Merge upstream
+        id: merge
         if: env.MERGE == 'true'
         env:
           REF: ${{ inputs.upstream_ref }}
         run: |
           git config user.name Marck
           git config user.email marc@github.com
+          echo "patched=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
           git fetch --tags https://github.com/luketanti/AeroFoil.git "$REF"
+          echo "upstream=$(git rev-parse --short=7 FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+          echo "describe=$(git describe --tags --always FETCH_HEAD)" >> "$GITHUB_OUTPUT"
           git merge --no-edit -m "Merge upstream $REF into patched" FETCH_HEAD
 
       - uses: actions/setup-python@v5
@@ -49,11 +54,6 @@ jobs:
           pip install -r requirements.txt
           python -m unittest discover -s tests
 
-      # A push made with GITHUB_TOKEN starts no new run, so this run builds the merge itself.
-      - name: Push the merge
-        if: env.MERGE == 'true'
-        run: git push origin HEAD:patched
-
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -63,10 +63,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Merged builds are tagged dev-<upstream>-<patched>, both commits reachable on GitHub.
       - id: meta
+        env:
+          UPSTREAM: ${{ steps.merge.outputs.upstream }}
+          PATCHED: ${{ steps.merge.outputs.patched }}
+          DESCRIBE: ${{ steps.merge.outputs.describe }}
         run: |
-          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version=$(git describe --tags --always)-patched" >> "$GITHUB_OUTPUT"
+          if [ -n "$UPSTREAM" ]; then
+            echo "tag=dev-$UPSTREAM-$PATCHED" >> "$GITHUB_OUTPUT"
+            echo "version=$DESCRIBE-patched.$PATCHED" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+            echo "version=$(git describe --tags --always)-patched" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: docker/build-push-action@v6
         with:
@@ -77,10 +87,10 @@ jobs:
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
             ghcr.io/marck/aerofoil:latest
-            ghcr.io/marck/aerofoil:sha-${{ steps.meta.outputs.sha }}
+            ghcr.io/marck/aerofoil:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
 
       - name: Summary
-        run: echo "Pushed \`ghcr.io/marck/aerofoil:sha-${{ steps.meta.outputs.sha }}\` (${{ steps.meta.outputs.version }})." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Pushed \`ghcr.io/marck/aerofoil:${{ steps.meta.outputs.tag }}\` (${{ steps.meta.outputs.version }})." >> "$GITHUB_STEP_SUMMARY"

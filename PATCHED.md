@@ -8,9 +8,11 @@ are merged upstream, so for now this branch is upstream `dev` plus this CI.
 ## Update to the newest upstream dev
 
 Actions, then **Build and push to GHCR**, then **Run workflow** (upstream branch `dev`).
-It merges upstream into `patched`, runs the tests, pushes the merge and publishes the
-image; the run summary names the new `sha-<commit>` tag. A merge conflict or a failing
-test stops the run before anything is pushed. Leave the field empty to rebuild as is.
+It merges upstream into a copy of `patched`, runs the tests and publishes
+`dev-<upstream commit>-<patched commit>`; the run summary names the tag. The branch
+itself is not changed (GITHUB_TOKEN may not push upstream's workflow edits). A merge
+conflict or a failing test stops the run before anything is published. Leave the
+field empty to build `patched` as is (`sha-<commit>`).
 
 ## Add a fix
 

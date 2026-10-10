@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: Upstream branch to merge into patched first (empty builds patched as is)
+        description: Upstream branch to merge before building (empty builds patched as is)
         default: dev
 
 concurrency:
